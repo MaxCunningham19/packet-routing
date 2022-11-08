@@ -2,10 +2,8 @@ import socket
 SERVER = "127.0.0.1"
 PORT = 8080
 client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-client.bind(("127.0.0.1",8000))
+client.bind(("127.0.0.1",8001))
 server_adrs = (SERVER,PORT)
 while True:
-  out_data = input()
-  client.sendto(bytes(out_data,'UTF-8'),server_adrs)
-  if out_data=='bye':
-    break
+  msg = client.recv(1024)
+  print(msg)

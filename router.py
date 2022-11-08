@@ -7,5 +7,5 @@ sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock.bind((IP, PORT))
 print("Router started @",IP,PORT)
 
-router = util.Router(sock)
+router = util.Router(sock,[(("127.0.0.1",8000),("127.0.0.1",8001))])
 router.run()
