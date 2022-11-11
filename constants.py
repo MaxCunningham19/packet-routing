@@ -1,0 +1,8 @@
+FIND = 'FIND'
+ACK = 'ACK'
+ADD = 'ADD'
+DEST = 'DEST'
+DROP = 'DROP'
+NAK = 'NAK'
+IN_NETWORK = "in_network"
+PORT = 54321

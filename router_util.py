@@ -1,45 +1,111 @@
 import socket
 from typing import List
+import constants as c
+import encode as enc
+import threading
+import time
 
 BUFFERSIZE = 1024
-TIMEOUT = 3.0
+TIMEOUT = 0.25
 DEST_TBL_I = 0
 FRWR_TBL_I = 1
 EMPTY_ROW = -1
 
+EMPTY = []
+recieved = []
+to_send = []
 
-class Router:
-    def __init__(self, socket: socket.socket, table: List):
-        self.table = table
-        self.socket = socket
-        self.socket.settimeout(TIMEOUT)
+def get_table(filename):
+    table = []
+    with open(filename) as f:
+        for line in f:
+            cont = line.split(',')
+            table.append([cont[0],cont[1],cont[2]])
+    return table
 
+class Interface(threading.Thread):
+    def __init__(self,sock:socket.socket, interface:int):
+        threading.Thread.__init__(self)
+        self.socket = sock
+        self.interface = interface
+       
     def run(self):
-        while True:
-            adrs, info = self.recieve()
-            self.forward(adrs, info)
-
-    def recieve(self):
+        print("interface", self.interface, "running")
         while True:
             try:
                 data = self.socket.recvfrom(BUFFERSIZE)
-                return data[1], data[0] 
+                print(data)
+                recieved.append(data)
+                while len(to_send[self.interface]) > 0:
+                    sending = to_send[self.interface].pop()
+                    self.socket.sendto(sending[0],sending[1])
             except TimeoutError:
-                continue
+                while len(to_send[self.interface]) > 0:
+                    sending = to_send[self.interface].pop()
+                    self.socket.sendto(sending[0],sending[1])
+       
 
-    def forward(self, adrs, info):
-        address = self.find_forward_address(adrs, info)
-        if address is not EMPTY_ROW:
-            self.send(info, address)
+#     Dest      #     whereto   #     socket    #
+# ------------- # ------------- # ------------- #
+#               #               #               #
+#               #               #               #
+
+class Router:
+    def __init__(self, socks:List[socket.socket], table: List[List]):
+        self.route_table = table
+        self.sockets : List[Interface] = []
+        for i in range(len(socks)):
+            to_send.append([])
+            socks[i].settimeout(TIMEOUT)
+            self.sockets.append(Interface(socks[i],i))
+        
+
+    def run(self):
+        print("router started")
+        for i in range(len(self.sockets)):
+            self.sockets[i].start()
+        while True:
+            print("waiting")
+            self.forward(self.recieve())
+
+
+    def recieve(self):
+        while True:
+            if len(recieved) > 0:
+                data = recieved.pop()
+                return data[0]
+            time.sleep(1)
+
+    def forward(self, info):
+        print(info)
+        _, dest_adrs, data = enc.decode(info) #TODO
+        next_address, interface = self.find_forward_address(dest_adrs)
+        if  next_address is not None:
+            self.send(dest_adrs, data,  next_address, interface)
             return
-        print(self.socket.getsockname(), 'dropped packet', adrs, info)
+        print('dropped packet',  next_address, info)
 
-    def find_forward_address(self, adrs, info):
-        for row in self.table:
-            if row[DEST_TBL_I] == adrs:
-                return row[FRWR_TBL_I]
-        return EMPTY_ROW
 
-    def send(self, data, address):
-        print(data, address)
-        self.socket.sendto(data, address)
+    def find_forward_address(self, dest_adrs:str):
+        longest_prefix_id = -1
+        longest_prefix_length = 0
+        for i in range(len(self.route_table)):
+            row : List = self.route_table[i]
+            if dest_adrs[0].startswith(self.route_table[i][0]):
+                if len(self.route_table[i][0]) > longest_prefix_length:
+                    longest_prefix_id = i
+                    longest_prefix_length = len(self.route_table[i][0])
+        if longest_prefix_id == -1:
+            return None, None
+        return self.route_table[longest_prefix_id][1], self.route_table[longest_prefix_id][2]
+
+
+    def send(self,dest_adrs, data:bytes, next_address, interface):
+        if next_address == c.IN_NETWORK:
+            msg = enc.encode('',dest_adrs, data)
+            to_send[interface].append((msg,dest_adrs))
+        else:
+            msg = enc.encode('',dest_adrs,data)
+            to_send[interface].append((msg,next_address))
+            
+
