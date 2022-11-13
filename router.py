@@ -14,10 +14,18 @@ for i in range(1,len(socket.gethostbyname_ex(hostname)[2])):
 
 # sock1 = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 # sock1.bind(('router1', PORT)) #bind to all interfaces
-
-table = [
-    ["172.20.1",c.IN_NETWORK,0],
-    ["172.20.2",c.IN_NETWORK,1]
+d_name = input("docker name: ")
+if d_name == "router1":
+    table = [
+        ["172.20.1",c.IN_NETWORK,1],
+        ["172.20.2",c.IN_NETWORK,0],
+        ["172.20.3",('172.20.2.4',c.PORT),0],
+    ]
+else:
+    table = [
+        ["172.20.1",('172.20.2.2',c.PORT),0],
+        ["172.20.2",c.IN_NETWORK,0],
+        ["172.20.3",c.IN_NETWORK,1]
     ]
 
 router = util.Router(sockets,table)

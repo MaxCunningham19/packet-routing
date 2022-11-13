@@ -6,7 +6,7 @@ import threading
 import time
 
 BUFFERSIZE = 1024
-TIMEOUT = 0.25
+TIMEOUT = 0.1
 DEST_TBL_I = 0
 FRWR_TBL_I = 1
 EMPTY_ROW = -1
@@ -30,18 +30,19 @@ class Interface(threading.Thread):
         self.interface = interface
        
     def run(self):
-        print("interface", self.interface, "running")
+        print("interface",self.socket.getsockname(), self.interface, "running")
         while True:
             try:
                 data = self.socket.recvfrom(BUFFERSIZE)
-                print(data)
                 recieved.append(data)
                 while len(to_send[self.interface]) > 0:
                     sending = to_send[self.interface].pop()
+                    print(sending, self.interface, self.socket.getsockname())
                     self.socket.sendto(sending[0],sending[1])
             except TimeoutError:
                 while len(to_send[self.interface]) > 0:
                     sending = to_send[self.interface].pop()
+                    print(sending, self.interface, self.socket.getsockname())
                     self.socket.sendto(sending[0],sending[1])
        
 
@@ -65,7 +66,6 @@ class Router:
         for i in range(len(self.sockets)):
             self.sockets[i].start()
         while True:
-            print("waiting")
             self.forward(self.recieve())
 
 
@@ -74,11 +74,10 @@ class Router:
             if len(recieved) > 0:
                 data = recieved.pop()
                 return data[0]
-            time.sleep(1)
+            time.sleep(TIMEOUT)
 
     def forward(self, info):
-        print(info)
-        _, dest_adrs, data = enc.decode(info) #TODO
+        _, dest_adrs, data = enc.decode(info)
         next_address, interface = self.find_forward_address(dest_adrs)
         if  next_address is not None:
             self.send(dest_adrs, data,  next_address, interface)
