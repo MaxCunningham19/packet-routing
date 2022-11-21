@@ -14,16 +14,7 @@ EMPTY_ROW = -1
 EMPTY = []
 recieved = []
 to_send = []
-route_table = []
 update_list = []
-
-def get_table(filename):
-    table = []
-    with open(filename) as f:
-        for line in f:
-            cont = line.split(',')
-            table.append([cont[0], cont[1], cont[2]])
-    return table
 
 
 def eq_adrs(adrs1, adrs2):
@@ -87,7 +78,7 @@ class Interface(threading.Thread):
                 continue
 
 class ContrlCon(threading.Thread):
-    def __init__(self, sock:socket.socket, contrlr_adrs,):
+    def __init__(self, sock:socket.socket, contrlr_adrs):
         threading.Thread.__init__(self)
         self.socket = sock
         self.contrlr_adrs = contrlr_adrs
@@ -109,10 +100,10 @@ class ContrlCon(threading.Thread):
 
     def update_table(self,adrs, info):
         dest_pref, soc = enc.decode_data(info)
-        for row in route_table:
-            if row[0] == dest_pref:
-                row[1] = adrs
-                row[2] = soc
+        # for row inself.table:
+        #     if row[0] == dest_pref:
+        #         row[1] = adrs
+        #         row[2] = soc
 
     def send_hello(self):
         try:
@@ -121,29 +112,35 @@ class ContrlCon(threading.Thread):
         except TimeoutError:
                 return
 
-    def get_update(self,data):
+    def get_update(self,dest):
         while True:
             try:
-                msg = enc.encode(c.FIND,data,'')
+                msg = enc.encode(c.FIND,dest,'')
                 self.socket.sendto(msg,self.contrlr_adrs)
-                time.sleep(TIMEOUT)
-                recv = self.socket.recvfrom(BUFFERSIZE)
-                if eq_adrs(recv[0],self.contrlr_adrs):
-                    op, adrs, info = enc.decode(data)
-                    if op == c.FLOWMOD:
-                        self.update_table(adrs,info)
+                recv = self.recieve()
+                if eq_adrs(recv[1],self.contrlr_adrs):
+                    op, adrs, info = enc.decode(recv[0])
+                    return op, adrs, info
+            except TimeoutError:
+                continue
+
+    def recieve(self):
+        while True:
+            try:
+                data = self.socket.recvfrom(BUFFERSIZE)
+                return data
             except TimeoutError:
                 continue
 
 
-#     Dest      #     whereto   #     socket    #
+# Dest prefix   #     whereto   #     socket    #
 # ------------- # ------------- # ------------- #
 #               #               #               #
 #               #               #               #
 
 class Router:
     def __init__(self, socks: List[socket.socket], contrl_con:socket.socket,ctrlr_adrs, init_table: List[List]):
-        route_table = init_table
+        self.table = init_table
         self.contrl_con = ContrlCon(contrl_con,ctrlr_adrs)
         self.sockets: List[Interface] = []
         for i in range(len(socks)):
@@ -170,24 +167,52 @@ class Router:
         op, dest_adrs, data = enc.decode(info)
         if op == c.SEND:
             next_address, interface = self.find_forward_address(dest_adrs)
-            if  next_address is c.DROP or next_address is not None:
+            if next_address != c.DROP and next_address is not None and interface != -1:
                 self.send(c.SEND, dest_adrs, data,  next_address, interface)
                 return
-            print('dropped packet',  next_address, info)
+            print('dropped packet', dest_adrs, info)
 
     def find_forward_address(self, dest_adrs: str):
         longest_prefix_id = -1
         longest_prefix_length = 0
-        for i in range(len(route_table)):
-            row: List = route_table[i]
-            if dest_adrs[0].startswith(route_table[i][0]):
-                if len(route_table[i][0]) > longest_prefix_length:
+        for i in range(len(self.table)):
+            if dest_adrs[0].startswith(self.table[i][0]):
+                if len(self.table[i][0]) > longest_prefix_length:
                     longest_prefix_id = i
-                    longest_prefix_length = len(route_table[i][0])
+                    longest_prefix_length = len(self.table[i][0])
+                    
         if longest_prefix_id == -1:
-            self.update(dest_adrs)
-            return self.find_forward_address(dest_adrs)
-        return route_table[longest_prefix_id][1], route_table[longest_prefix_id][2]
+            op, nxt_adrs, _ = self.update(dest_adrs)
+            if op == c.ACK:
+                return self.add_to_table(nxt_adrs,dest_adrs)
+            else:
+                return None, None
+            
+        return self.table[longest_prefix_id][1],self.table[longest_prefix_id][2]
+
+    def add_to_table(self,nxt_adrs,dest):
+        if eq_adrs(nxt_adrs,dest):
+            return dest, self.find_socket(dest)
+        if eq_adrs(c.DROP,nxt_adrs):
+            return nxt_adrs,0
+
+        soc = self.find_socket(nxt_adrs)
+        if soc == -1:
+            raise Exception('error controller gave invalid address')
+        prefix = dest[0].split('.')
+        prefix = prefix[0:3]
+        prefix = '.'.join(prefix)
+        self.table.append([prefix,nxt_adrs,soc])
+        return nxt_adrs,soc
+
+    def find_socket(self,adrs):
+        longest = -1
+        soc = -1
+        for row in self.table:
+            if adrs[0].startswith(row[0]) and len(row[0])>longest:
+                soc = row[2]
+                longest = len(row[0])
+        return soc
 
     def send(self, op, dest_adrs, data: bytes, next_address, interface):
         if next_address == c.IN_NETWORK:
@@ -197,9 +222,10 @@ class Router:
             msg = enc.encode(op, dest_adrs, data)
             to_send[interface].append((msg, next_address))
 
-    def update(dest_adrs):
-        update_list.append(dest_adrs)
-        while len(update_list)> 0:
-            time.sleep(TIMEOUT*4)
+    def update(self,dest_adrs):
+        return self.contrl_con.get_update(dest_adrs)
+        # update_list.append(dest_adrs)
+        # while len(update_list)> 0:
+        #     time.sleep(TIMEOUT*4)
         
 
