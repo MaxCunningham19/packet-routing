@@ -6,7 +6,6 @@ import threading
 import time
 
 BUFFERSIZE = 1024
-TIMEOUT = 0.1
 DEST_TBL_I = 0
 FRWR_TBL_I = 1
 EMPTY_ROW = -1
@@ -15,6 +14,7 @@ EMPTY = []
 recieved = []
 to_send = []
 update_list = []
+routing_table = []
 
 
 def eq_adrs(adrs1, adrs2):
@@ -42,19 +42,24 @@ class Interface(threading.Thread):
                     while len(to_send[self.interface]) > 0:
                         sending = to_send[self.interface].pop()
                         print(self.interface, self.socket.getsockname(),
-                              '| sending', sending)
-                        self.send(sending)
-                        print(self.interface, self.socket.getsockname(),
+                          '| sending', sending)
+                        if self.send(sending):
+                            print(self.interface, self.socket.getsockname(),
                               '| recieved ACK')
+                        else:
+                            print(self.interface, self.socket.getsockname(),
+                              '| dropped',sending)
             except TimeoutError:
                 while len(to_send[self.interface]) > 0:
                     sending = to_send[self.interface].pop()
                     print(self.interface, self.socket.getsockname(),
                           '| sending', sending)
-                    self.send(sending)
-                    print(self.interface, self.socket.getsockname(),
+                    if self.send(sending):
+                        print(self.interface, self.socket.getsockname(),
                           '| recieved ACK')
-
+                    else:
+                        print(self.interface, self.socket.getsockname(),
+                          '| dropped',sending)
     def sendACK(self, adrs):
         try:
             print(self.interface, self.socket.getsockname(),
@@ -66,6 +71,7 @@ class Interface(threading.Thread):
             return False
 
     def send(self, sending):
+        count = 0
         while True:
             try:
                 self.socket.sendto(sending[0], sending[1])
@@ -73,67 +79,77 @@ class Interface(threading.Thread):
                 op, _, _ = enc.decode(data[0])
                 print(self.interface, '|', data[1], sending[1])
                 if eq_adrs(data[1], sending[1]) and op == c.ACK:
-                    return
+                    return True
             except TimeoutError:
+                if count > 10:
+                    return False
+                count = count+1
                 continue
 
-class ContrlCon(threading.Thread):
+ctrlr_lock = threading.Lock()
+class ConHello(threading.Thread):
     def __init__(self, sock:socket.socket, contrlr_adrs):
         threading.Thread.__init__(self)
         self.socket = sock
         self.contrlr_adrs = contrlr_adrs
 
     def run(self):
-        print("Controller Connection",self.socket.getsockname(), "running")
         while True:
             try:
-                while len(update_list) > 0:
-                    data = update_list.pop()
-                    self.get_update(data)
-                data,recved_adrs = self.socket.recvfrom(BUFFERSIZE)
-                if eq_adrs(self.contrlr_adrs,recved_adrs):
-                    op, adrs, info = enc.decode(data)
-                    if op == c.FLOWMOD:
-                        self.update_table(adrs,info)
-            except TimeoutError:
                 self.send_hello()
-
-    def update_table(self,adrs, info):
-        dest_pref, soc = enc.decode_data(info)
-        # for row inself.table:
-        #     if row[0] == dest_pref:
-        #         row[1] = adrs
-        #         row[2] = soc
+                time.sleep(c.TIMEOUT*c.TIMEOUT_MUL)
+            except TimeoutError:
+                continue
 
     def send_hello(self):
-        try:
-            msg = enc.encode(c.HELLO,self.socket.getsockname(),'')
-            self.socket.sendto(msg,self.contrlr_adrs)
-        except TimeoutError:
-                return
+        msg = enc.encode(c.HELLO,self.socket.getsockname(),'')
+        ctrlr_lock.acquire()
+        while True:
+            try:
+                self.socket.sendto(msg,self.contrlr_adrs)
+                data = self.socket.recvfrom(BUFFERSIZE)
+                op, adrs, _ = enc.decode(data[0])
+                if op == c.ACK and eq_adrs(self.contrlr_adrs, data[1]) and eq_adrs(self.socket.getsockname(),adrs):
+                    ctrlr_lock.release()
+                    return
+            except TimeoutError:
+                continue
+
+class ContrlCon():
+    def __init__(self, sock:socket.socket, contrlr_adrs):
+        self.hellos = ConHello(sock,contrlr_adrs)
+        self.hellos.start()
+        self.socket = sock
+        self.contrlr_adrs = contrlr_adrs
+
+    # def update_table(self,adrs, info):
+    #     dest_pref, _ = enc.decode_data(info)
+    #     for i in range(len(routing_table)):
+    #         if dest_pref == routing_table[i][0]:
+    #             soc = self.find_socket(adrs)
+    #             if soc == -1:
+    #                 raise Exception('error controller gave invalid address')
+    #             routing_table[i] = [dest_pref,adrs,soc]
 
     def get_update(self,dest):
+        msg = enc.encode(c.FIND,dest,'')
+        ctrlr_lock.acquire()
         while True:
             try:
-                msg = enc.encode(c.FIND,dest,'')
                 self.socket.sendto(msg,self.contrlr_adrs)
-                recv = self.recieve()
-                if eq_adrs(recv[1],self.contrlr_adrs):
-                    op, adrs, info = enc.decode(recv[0])
-                    return op, adrs, info
-            except TimeoutError:
-                continue
-
-    def recieve(self):
-        while True:
-            try:
-                data = self.socket.recvfrom(BUFFERSIZE)
-                return data
+                recv = self.socket.recvfrom(BUFFERSIZE)
+                op, adrs, info = enc.decode(recv[0])
+                if eq_adrs(recv[1],self.contrlr_adrs) and op == c.FLOWMOD:
+                    ctrlr_lock.release()
+                    return c.ACK, adrs, info
             except TimeoutError:
                 continue
 
 
-# Dest prefix   #     whereto   #     socket    #
+
+
+
+# Dest prefix   #    whereto    #     socket    #
 # ------------- # ------------- # ------------- #
 #               #               #               #
 #               #               #               #
@@ -145,7 +161,7 @@ class Router:
         self.sockets: List[Interface] = []
         for i in range(len(socks)):
             to_send.append([])
-            socks[i].settimeout(TIMEOUT)
+            socks[i].settimeout(c.TIMEOUT)
             self.sockets.append(Interface(socks[i], i))
 
     def run(self):
@@ -161,7 +177,7 @@ class Router:
             if len(recieved) > 0:
                 data = recieved.pop()
                 return data[0], data[1], data[2]
-            time.sleep(TIMEOUT)
+            time.sleep(c.TIMEOUT)
 
     def forward(self, info, c_adrs, c_interface):
         op, dest_adrs, data = enc.decode(info)
@@ -196,9 +212,12 @@ class Router:
         if eq_adrs(c.DROP,nxt_adrs):
             return nxt_adrs,0
 
-        soc = self.find_socket(nxt_adrs)
-        if soc == -1:
-            raise Exception('error controller gave invalid address')
+        soc = 0
+        print(nxt_adrs,dest)
+        if nxt_adrs != c.DROP:
+            soc = self.find_socket(nxt_adrs)
+            if soc == -1:
+                raise Exception('error controller gave invalid address')
         prefix = dest[0].split('.')
         prefix = prefix[0:3]
         prefix = '.'.join(prefix)
@@ -226,6 +245,6 @@ class Router:
         return self.contrl_con.get_update(dest_adrs)
         # update_list.append(dest_adrs)
         # while len(update_list)> 0:
-        #     time.sleep(TIMEOUT*4)
+        #     time.sleep(c.TIMEOUT*4)
         
 
