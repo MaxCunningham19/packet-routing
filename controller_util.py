@@ -3,35 +3,38 @@ from typing import List
 from collections import defaultdict
 import constants as c
 import encode as enc
+import time
 
 BUFFERSIZE = 1024
-TIMEOUT = 3.0
 DEST_TBL_I = 0
 FRWR_TBL_I = 1
 EMPTY_ROW = -1
 
 
+
 class Controller():
     def __init__(self, socket: socket.socket, graph:dict, info_table:dict, connect_table:list):
+        self.timers = []
         self.socket = socket
         self.graph = graph
         self.conn_table = connect_table
-        # self.build_graph(connect_table)
         self.info_table = info_table
-        self.socket.settimeout(TIMEOUT)
+        self.socket.settimeout(c.TIMEOUT*2)
 
     def run(self):
         while True:
             cur_adrs, op, oth_adrs, _ = self.recieve()
-            if op == c.FIND:
-                next_adrs = self.find_next_addrs(cur_adrs, oth_adrs)
-                self.send(cur_adrs, c.ACK, next_adrs)
-            # elif op == c.FLOW:
-            #     self.send_table(cur_adrs)
-            # elif op == c.ADD:
-            #     self.add_node(cur_adrs)
+            if self.is_router(cur_adrs):
+                if op == c.FIND:
+                    next_adrs = self.find_next_addrs(cur_adrs, oth_adrs)
+                    print(cur_adrs, c.FLOWMOD, next_adrs)
+                    self.send(cur_adrs, c.FLOWMOD, next_adrs)
+                elif op == c.HELLO :
+                    self.send(cur_adrs,c.ACK,cur_adrs)
+                else:
+                    self.send(cur_adrs, c.NAK, cur_adrs)
             else:
-                self.send(cur_adrs, c.NAK, '')
+                self.send(cur_adrs, c.NAK, cur_adrs)
 
     def recieve(self):
         while True:
@@ -41,6 +44,10 @@ class Controller():
                 return data[1], op, dest_adrs, info
             except TimeoutError:
                 continue
+
+    def is_router(self, adrs):
+        return self.info_table.get(adrs[0]) != None
+
 
     # def add_node(self, cur_adrs):
 
@@ -119,9 +126,11 @@ class Controller():
         return c.DROP
 
     def send(self, address, op, next_adrs):
-        print(op, next_adrs, address)
-        ret = enc.encode(op, next_adrs, '')
-        self.socket.sendto(ret, address)
+        try:
+            ret = enc.encode(op, next_adrs, '')
+            self.socket.sendto(ret, address)
+        except TimeoutError:
+            return
 
     # def send_table(self, cur_address):
     #     cur_table = self.flow_table.get(cur_address)
