@@ -33,13 +33,4 @@ router2_info = [('172.20.2.3',c.PORT),('172.20.3.2',c.PORT)]
 # }
 
 controller = util.Controller(sock)
-controller.print_info()
-controller.add_router(router1,router1_info)
-controller.print_info()
-print(controller.find_next_addrs((router1,c.PORT),('172.20.3.6',c.PORT)))
-controller.add_router(router2,router2_info)
-controller.print_info()
-print(controller.find_next_addrs((router1,c.PORT),('172.20.3.6',c.PORT)))
-controller.remove_router(router1)
-controller.print_info()
-print(controller.find_next_addrs((router1,c.PORT),('172.20.3.6',c.PORT)))
+controller.run()

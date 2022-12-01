@@ -162,6 +162,17 @@ class ConHello(threading.Thread):
     def send_info(self):
         for i in range(len(self.address_table)):
             self.send_network(self.address_table[i])
+        msg = enc.encode(c.ACK,c.DROP,'')
+        while True:
+            try:
+                self.socket.sendto(msg,self.contrlr_adrs)
+                (data,adrs) = self.socket.recvfrom(BUFFERSIZE)
+                if eq_adrs(adrs,self.contrlr_adrs):
+                    op,addy,_ = enc.decode(data)
+                    if (op == c.ACK or op == c.NAK) and eq_adrs(addy,c.DROP):
+                        return
+            except TimeoutError:
+                continue
 
     def send_network(self, adrs):
         msg = enc.encode(c.FLOWMOD, adrs, '')

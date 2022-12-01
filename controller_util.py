@@ -26,17 +26,55 @@ class Controller():
     def run(self):
         while True:
             cur_adrs, op, oth_adrs, _ = self.recieve()
-            if self.is_router(cur_adrs):
-                if op == c.FIND:
+            if not self.is_router(cur_adrs):
+                self.new_router(cur_adrs)
+            if op == c.FIND:
                     next_adrs = self.find_next_addrs(cur_adrs, oth_adrs)
                     print(cur_adrs, c.FLOWMOD, next_adrs)
                     self.send(cur_adrs, c.FLOWMOD, next_adrs)
-                elif op == c.HELLO:
-                    self.send(cur_adrs, c.ACK, cur_adrs)
-                else:
-                    self.send(cur_adrs, c.NAK, cur_adrs)
+            elif op == c.HELLO:
+                
+                self.send(cur_adrs, c.ACK, cur_adrs)
             else:
                 self.send(cur_adrs, c.NAK, cur_adrs)
+
+    def new_router(self, adrs):
+        router_info : set = set()
+        while True:
+            try:
+                self.socket.sendto(enc.encode(c.FLOW,adrs,''),adrs)
+                (data,cur_adrs) = self.socket.recvfrom(BUFFERSIZE)
+                if self.equal_address(cur_adrs,adrs):
+                    op,addy, _ = enc.decode(data)
+                    if op == c.FLOWMOD:
+                        router_info.add(addy)
+                        self.socket.sendto(enc.encode(c.ACK,addy,''),adrs)
+                        break
+                else:
+                    self.socket.sendto(enc.encode(c.NAK,cur_adrs,''),cur_adrs)
+            except TimeoutError:
+                continue
+
+        while True:
+            try:
+                (data,cur_adrs) = self.socket.recvfrom(BUFFERSIZE)
+                if self.equal_address(cur_adrs,adrs):
+                    op,addy, _ = enc.decode(data)
+                    if op == c.FLOWMOD:
+                        router_info.add(addy)
+                        self.socket.sendto(enc.encode(c.ACK,addy,''),adrs)
+                    if op == c.ACK and self.equal_address(addy, c.DROP):
+                        self.socket.sendto(enc.encode(c.ACK,c.DROP,''),cur_adrs)
+                        break
+                else:
+                    self.socket.sendto(enc.encode(c.NAK,cur_adrs,''),cur_adrs)
+            except TimeoutError:
+                continue
+
+        inf = []
+        for val in router_info:
+            inf.append(val)
+        self.add_router(adrs[0],inf)
 
     def recieve(self):
         while True:
@@ -45,6 +83,7 @@ class Controller():
                 op, dest_adrs, info = enc.decode(data[0])
                 return data[1], op, dest_adrs, info
             except TimeoutError:
+                self.print_info()
                 continue
 
     def is_router(self, adrs):
