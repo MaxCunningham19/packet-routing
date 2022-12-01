@@ -14,7 +14,7 @@ PORT = 54321
 CTLR_ADRS = ('172.20.9.2',PORT)
 
 TIMEOUT = 0.1
-TIMEOUT_MUL = 25 #makes it 2.5 seconds
+TIMEOUT_MUL = 10 #makes it 1.0 seconds
 
 def getPrefix(adrs:str):
     try:

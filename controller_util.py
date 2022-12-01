@@ -9,11 +9,11 @@ BUFFERSIZE = 1024
 DEST_TBL_I = 0
 FRWR_TBL_I = 1
 EMPTY_ROW = -1
-
+MAX_TIME = c.TIMEOUT * c.TIMEOUT_MUL * 3
 
 class Controller():
     def __init__(self, socket: socket.socket ):
-        self.timers = []
+        self.timers = {}
         self.socket = socket
         self.info_table = {}
         self.graph = {}
@@ -28,6 +28,9 @@ class Controller():
             cur_adrs, op, oth_adrs, _ = self.recieve()
             if not self.is_router(cur_adrs):
                 self.new_router(cur_adrs)
+                self.timers[cur_adrs[0]] = time.time()
+            else:
+                self.timers[cur_adrs[0]] = time.time()
             if op == c.FIND:
                     next_adrs = self.find_next_addrs(cur_adrs, oth_adrs)
                     print(cur_adrs, c.FLOWMOD, next_adrs)
@@ -77,6 +80,7 @@ class Controller():
         self.add_router(adrs[0],inf)
 
     def recieve(self):
+        count = 0
         while True:
             try:
                 data = self.socket.recvfrom(BUFFERSIZE)
@@ -84,7 +88,21 @@ class Controller():
                 return data[1], op, dest_adrs, info
             except TimeoutError:
                 self.print_info()
+                if count%5 == 0:
+                    self.check_timers()
+                count = count + 1
                 continue
+
+    def check_timers(self):
+        to_be_removed = []
+        for router in self.timers.keys():
+            if self.timers[router] + MAX_TIME < time.time():
+                print('removing',router)
+                to_be_removed.append(router)
+
+        for r in to_be_removed:
+            del self.timers[r]
+            self.remove_router(r)
 
     def is_router(self, adrs):
         return self.info_table.get(adrs[0]) != None
