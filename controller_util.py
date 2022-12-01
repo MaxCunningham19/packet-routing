@@ -11,15 +11,17 @@ FRWR_TBL_I = 1
 EMPTY_ROW = -1
 
 
-
 class Controller():
-    def __init__(self, socket: socket.socket, graph:dict, info_table:dict, connect_table:list):
+    def __init__(self, socket: socket.socket ):
         self.timers = []
         self.socket = socket
-        self.graph = graph
-        self.conn_table = connect_table
-        self.info_table = info_table
+        self.info_table = {}
+        self.graph = {}
+        self.conn_table = {}
         self.socket.settimeout(c.TIMEOUT*2)
+
+    def print_info(self):
+        print('\n',self.info_table,'\n\n', self.conn_table, '\n\n', self.graph, '\n')
 
     def run(self):
         while True:
@@ -29,8 +31,8 @@ class Controller():
                     next_adrs = self.find_next_addrs(cur_adrs, oth_adrs)
                     print(cur_adrs, c.FLOWMOD, next_adrs)
                     self.send(cur_adrs, c.FLOWMOD, next_adrs)
-                elif op == c.HELLO :
-                    self.send(cur_adrs,c.ACK,cur_adrs)
+                elif op == c.HELLO:
+                    self.send(cur_adrs, c.ACK, cur_adrs)
                 else:
                     self.send(cur_adrs, c.NAK, cur_adrs)
             else:
@@ -48,38 +50,6 @@ class Controller():
     def is_router(self, adrs):
         return self.info_table.get(adrs[0]) != None
 
-
-    # def add_node(self, cur_adrs):
-
-    #     if not self.in_table(cur_adrs):
-    #         while True:
-    #             try:
-    #                 data = self.socket.recvfrom(BUFFERSIZE)
-    #                 if self.equal_address(data[1],cur_adrs):
-    #                     op, adrs, info = enc.decode(data[0])
-    #                     if op == c.ADD:
-    #                         net_work, soc = enc.decode_data(info)
-    #                         self.add_to_table()
-
-    #             except TimeoutError:
-    #                 continue
-    #     else:
-    #          self.sendNAK(cur_adrs)
-
-    # def in_table(self, adrs):
-
-    # def sendNAK(self,cur_adrs):
-    #     try:
-    #         self.socket.sendto(enc.encode(c.NAK,cur_adrs,''),cur_adrs)
-    #     except TimeoutError:
-    #         return
-
-    # def sendACK(self,cur_adrs):
-    #     try:
-    #         self.socket.sendto(enc.encode(c.ACK,cur_adrs,''),cur_adrs)
-    #     except TimeoutError:
-    #         return
-
     def find_next_addrs(self, cur_adrs, dest_adrs):
         dest_indxs = self.find_possible_dests(dest_adrs)
         start_indx = self.find_start_index(cur_adrs)
@@ -95,13 +65,13 @@ class Controller():
     def find_possible_dests(self, dest_adrs):
         adrses = []
         len_pref = -1
-        for row in self.conn_table:
-            if dest_adrs[0].startswith(row[1]):
-                if len(row[1]) > len_pref and len(row[0])>=1:
+        for key in self.conn_table:
+            if dest_adrs[0].startswith(key):
+                if len(key) > len_pref and len(key) >= 1:
                     adrses = []
-                    for v in row[0]:
+                    for v in self.conn_table[key]:
                         adrses.append(v)
-                    len_pref = len(row[1])
+                    len_pref = len(key)
         return adrses
 
     def find_start_index(self, cur_adrs):
@@ -132,14 +102,6 @@ class Controller():
         except TimeoutError:
             return
 
-    # def send_table(self, cur_address):
-    #     cur_table = self.flow_table.get(cur_address)
-    #     if cur_table is not None:
-    #         for row in cur_table:
-    #             self.send_row(cur_address, row[0], row[1], row[2])
-    #     else:
-    #         self.send(cur_address, c.NAK, '')
-
     def send_row(self, cur_address, prefix, dest_adrs, interface):
         data = enc.encode_data(prefix, interface)
         msg = enc.encode(c.FLOWMOD, dest_adrs, data)
@@ -157,21 +119,34 @@ class Controller():
     def equal_address(self, adrs1, adrs2):
         return adrs1[0] == adrs2[0] and adrs1[1] == adrs2[1]
 
-    def build_graph(self, conn_table):
+    def build_connection_table(self):
+        self.conn_table = {}
+        for router in self.info_table:
+            for adrs in self.info_table[router]:
+                pref = c.getPrefix(adrs[0])
+                if self.conn_table.get(pref) is not None:
+                    self.conn_table[pref].add(router)
+                else:
+                    self.conn_table[pref] = {router}
+
+    def build_graph(self):
         self.graph = {}
-        for row in conn_table:
-            for i in range(len(row[0])):
-                for j in range(i+1, len(row[0])):
-                    self.add_edge([row[0][i], row[0][j]])
+        for key in self.conn_table:
+            for c1 in self.conn_table[key]:
+                for c2 in self.conn_table[key]:
+                    if c1 is not c2:
+                        self.add_edge([c1,c2])
 
     def add_edge(self, edge):
         a, b = edge[0], edge[1]
         if self.graph.get(a) is None:
-            self.graph[a] = {}
-        self.graph[a][b] = 1
+            self.graph[a] = {b}
+        else:
+            self.graph[a].add(b)
         if self.graph.get(b) is None:
-            self.graph[b] = {}
-        self.graph[b][a] = 1
+            self.graph[b] = {a}
+        else:
+            self.graph[b].add(a)
 
     def remove_edge(self, edge):
         try:
@@ -180,15 +155,47 @@ class Controller():
         except:
             return
 
-    def remove_node(self, node):
-        try:
-            if self.graph.get(node) is not None:
-                del self.graph[node]
-            for n in self.graph.keys():
-                if self.graph.get(n).get(node) is not None:
-                    del self.graph[n][node]
-        except:
-            return
+    def add_router(self, router_address:tuple, router_info:list):
+        self.info_table[router_address] = router_info
+        self.add_to_conn_table_and_graph(router_address, router_info)
+    
+    def add_to_conn_table_and_graph(self,router_address:tuple, router_info:list):
+        for (address,_) in router_info:
+            pref = c.getPrefix(address)
+            if self.conn_table.get(pref) is not None:
+                for adrs in self.conn_table[pref]:
+                    self.add_edge([adrs,router_address])
+                self.conn_table[pref].add(router_address)
+            else:
+                self.conn_table[pref] = {router_address}
+
+
+    def remove_router(self, router_address):
+            if self.info_table.get(router_address) is not None:
+                del self.info_table[router_address]
+                self.remove_node(router_address)
+                self.remove_conns(router_address)
+
+    def remove_node(self, router_address):
+        if self.graph.get(router_address) is not None:
+            del self.graph[router_address]
+        
+        for key in self.graph.keys():
+            if router_address in self.graph[key]:
+                self.graph[key].remove(router_address)
+        return
+
+    def remove_conns(self,router_address):
+        to_be_deleted = []
+        for pref in self.conn_table.keys():
+            if router_address in self.conn_table[pref]:
+                to_be_deleted.append((pref,router_address))
+        
+        for (pref,r_adrs) in to_be_deleted:
+            self.conn_table[pref].remove(r_adrs)
+            if len(self.conn_table[pref]) == 0:
+                del self.conn_table[pref]
+
 
     def BFS_SP(self, strt_adrs, dest_adrses: list):
         explored = []

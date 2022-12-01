@@ -42,13 +42,13 @@ class Interface(threading.Thread):
                     while len(to_send[self.interface]) > 0:
                         sending = to_send[self.interface].pop()
                         print(self.interface, self.socket.getsockname(),
-                          '| sending', sending)
+                              '| sending', sending)
                         if self.send(sending):
                             print(self.interface, self.socket.getsockname(),
-                              '| recieved ACK')
+                                  '| recieved ACK')
                         else:
                             print(self.interface, self.socket.getsockname(),
-                              '| dropped',sending)
+                                  '| dropped', sending)
             except TimeoutError:
                 while len(to_send[self.interface]) > 0:
                     sending = to_send[self.interface].pop()
@@ -56,10 +56,11 @@ class Interface(threading.Thread):
                           '| sending', sending)
                     if self.send(sending):
                         print(self.interface, self.socket.getsockname(),
-                          '| recieved ACK')
+                              '| recieved ACK')
                     else:
                         print(self.interface, self.socket.getsockname(),
-                          '| dropped',sending)
+                              '| dropped', sending)
+
     def sendACK(self, adrs):
         try:
             print(self.interface, self.socket.getsockname(),
@@ -86,16 +87,18 @@ class Interface(threading.Thread):
                 count = count+1
                 continue
 
+
 info_table = []
 ctrlr_lock = threading.Lock()
 table_lock = threading.Lock()
 
-def add_to_table(nxt_adrs,dest):
+
+def add_to_table(nxt_adrs, dest):
     global info_table
-    if eq_adrs(nxt_adrs,dest):
+    if eq_adrs(nxt_adrs, dest):
         return dest, find_socket(dest)
-    if eq_adrs(c.DROP,nxt_adrs):
-        return nxt_adrs,0
+    if eq_adrs(c.DROP, nxt_adrs):
+        return nxt_adrs, 0
     soc = 0
     if nxt_adrs != c.DROP:
         soc = find_socket(nxt_adrs)
@@ -105,9 +108,10 @@ def add_to_table(nxt_adrs,dest):
     prefix = prefix[0:3]
     prefix = '.'.join(prefix)
     table_lock.acquire()
-    info_table.append([prefix,nxt_adrs,soc])
+    info_table.append([prefix, nxt_adrs, soc])
     table_lock.release()
-    return nxt_adrs,soc
+    return nxt_adrs, soc
+
 
 def find_socket(adrs):
     global info_table
@@ -115,17 +119,19 @@ def find_socket(adrs):
     soc = -1
     table_lock.acquire()
     for row in info_table:
-        if adrs[0].startswith(row[0]) and len(row[0])>longest:
+        if adrs[0].startswith(row[0]) and len(row[0]) > longest:
             soc = row[2]
             longest = len(row[0])
     table_lock.release()
     return soc
 
+
 class ConHello(threading.Thread):
-    def __init__(self, sock:socket.socket, contrlr_adrs):
+    def __init__(self, sock: socket.socket, contrlr_adrs, address_table):
         threading.Thread.__init__(self)
         self.socket = sock
         self.contrlr_adrs = contrlr_adrs
+        self.address_table = address_table
 
     def run(self):
         while True:
@@ -136,38 +142,44 @@ class ConHello(threading.Thread):
                 continue
 
     def send_hello(self):
-        msg = enc.encode(c.HELLO,self.socket.getsockname(),'')
+        msg = enc.encode(c.HELLO, self.socket.getsockname(), '')
         ctrlr_lock.acquire()
         while True:
             try:
-                self.socket.sendto(msg,self.contrlr_adrs)
+                self.socket.sendto(msg, self.contrlr_adrs)
                 data = self.socket.recvfrom(BUFFERSIZE)
                 op, adrs, _ = enc.decode(data[0])
-                # if op == c.FLOW:
-                #     self.send_info()
-                #     ctrlr_lock.release()
-                #     return
-                if op == c.ACK and eq_adrs(self.contrlr_adrs, data[1]) and eq_adrs(self.socket.getsockname(),adrs):
+                if op == c.FLOW:
+                    self.send_info()
+                    ctrlr_lock.release()
+                    return
+                if op == c.ACK and eq_adrs(self.contrlr_adrs, data[1]) and eq_adrs(self.socket.getsockname(), adrs):
                     ctrlr_lock.release()
                     return
             except TimeoutError:
                 continue
 
-    # def send_info(self):
-    #     table_lock.acquire
-    #     for i in range(len(info_table)):
-    #         if info_table[i][1] == c.IN_NETWORK:
-    #             while True:
-    #                 try:
-    #                     self.send_network(info_table[i])
+    def send_info(self):
+        for i in range(len(self.address_table)):
+            self.send_network(self.address_table[i])
 
-    #                 except TimeoutError:
-    #                     continue
-    #     table_lock.release()
+    def send_network(self, adrs):
+        msg = enc.encode(c.FLOWMOD, adrs, '')
+        while True:
+            try:
+                self.socket.sendto(msg, self.contrlr_adrs)
+                data = self.socket.recvfrom(BUFFERSIZE)
+                if eq_adrs(self.contrlr_adrs, data[1]):
+                    op, addy, _ = enc.decode(data[0])
+                    if op == c.ACK and eq_adrs(adrs, addy):
+                        return
+            except TimeoutError:
+                continue
+
 
 class ContrlCon():
-    def __init__(self, sock:socket.socket, contrlr_adrs):
-        self.hellos = ConHello(sock,contrlr_adrs)
+    def __init__(self, sock: socket.socket, contrlr_adrs, address_table):
+        self.hellos = ConHello(sock, contrlr_adrs, address_table)
         self.hellos.start()
         self.socket = sock
         self.contrlr_adrs = contrlr_adrs
@@ -181,23 +193,20 @@ class ContrlCon():
     #                 raise Exception('error controller gave invalid address')
     #             routing_table[i] = [dest_pref,adrs,soc]
 
-    def get_update(self,dest):
-        msg = enc.encode(c.FIND,dest,'')
+    def get_update(self, dest):
+        msg = enc.encode(c.FIND, dest, '')
         ctrlr_lock.acquire()
         while True:
             try:
-                self.socket.sendto(msg,self.contrlr_adrs)
+                self.socket.sendto(msg, self.contrlr_adrs)
                 recv = self.socket.recvfrom(BUFFERSIZE)
                 op, adrs, info = enc.decode(recv[0])
-                if eq_adrs(recv[1],self.contrlr_adrs) and op == c.FLOWMOD:
+                if eq_adrs(recv[1], self.contrlr_adrs) and op == c.FLOWMOD:
                     ctrlr_lock.release()
-                    nxt_adrs, soc = add_to_table(adrs,dest)
+                    nxt_adrs, soc = add_to_table(adrs, dest)
                     return c.ACK, nxt_adrs, soc
             except TimeoutError:
                 continue
-
-
-
 
 
 # Dest prefix   #    whereto    #     socket    #
@@ -206,10 +215,10 @@ class ContrlCon():
 #               #               #               #
 
 class Router:
-    def __init__(self, socks: List[socket.socket], contrl_con:socket.socket,ctrlr_adrs, init_table: list):
+    def __init__(self, socks: List[socket.socket], contrl_con: socket.socket, ctrlr_adrs, init_table: list, address_table: list):
         global info_table
         info_table = init_table
-        self.contrl_con = ContrlCon(contrl_con,ctrlr_adrs)
+        self.contrl_con = ContrlCon(contrl_con, ctrlr_adrs, address_table)
         self.sockets: List[Interface] = []
         for i in range(len(socks)):
             to_send.append([])
@@ -250,8 +259,8 @@ class Router:
                 if len(info_table[i][0]) > longest_prefix_length:
                     longest_prefix_id = i
                     longest_prefix_length = len(info_table[i][0])
-                    
-        a,b = info_table[longest_prefix_id][1],info_table[longest_prefix_id][2]
+
+        a, b = info_table[longest_prefix_id][1], info_table[longest_prefix_id][2]
         table_lock.release()
 
         if longest_prefix_id == -1:
@@ -260,7 +269,7 @@ class Router:
                 return nxt_adrs, soc
             else:
                 return None, None
-        
+
         return a, b
 
     def send(self, op, dest_adrs, data: bytes, next_address, interface):
@@ -271,7 +280,5 @@ class Router:
             msg = enc.encode(op, dest_adrs, data)
             to_send[interface].append((msg, next_address))
 
-    def update(self,dest_adrs):
+    def update(self, dest_adrs):
         return self.contrl_con.get_update(dest_adrs)
-        
-
